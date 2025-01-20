@@ -1,0 +1,4 @@
+wikiextractor
+nltk
+requests
+tqdm

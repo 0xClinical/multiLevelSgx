@@ -1,0 +1,30 @@
+# 构建目录
+build/
+bin/
+lib/
+
+# 数据集文件
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# 系统文件
+.DS_Store
+Thumbs.db
