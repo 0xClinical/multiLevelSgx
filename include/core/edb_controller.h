@@ -7,7 +7,7 @@ public:
     EDBController() = default;
     // 搜索功能
     std::vector<std::pair<std::string, std::string>> 
-    search(const SearchToken& token);
+    search(const SearchToken& token,size_t max_doc = 0);
     
     // 更新索引功能
     void updateIndex(const Keyword& keyword, 

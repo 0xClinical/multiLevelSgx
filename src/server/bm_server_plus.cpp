@@ -1,53 +1,31 @@
-#include "server/bm_server.h"
+#include "server/bm_server_plus.h"
 
-BMServer::BMServer(int port) : port_(port) {
-    bm_ = std::make_unique<BMScheme>();
-    std::cout << "Initializing BM Server..." << std::endl;
+BMServerPlus::BMServerPlus(int port) : port_(port) {
+    bm_plus_ = std::make_unique<BMSchemePlus>();
+    
     setupRoutes();
 }
 
-void BMServer::start() {
-    std::cout << "\nBM Server starting on port " << port_ << std::endl;
-    std::cout << "Routes configured:" << std::endl;
-    std::cout << "  POST /update-keys" << std::endl;
-    std::cout << "  POST /add-user" << std::endl;
-    // ... 列出其他路由 ...
-    
-    bm_->startStateKeyUpdateTimer(1);
+void BMServerPlus::start() {
+    std::cout << "BM Server Plus starting on port " << port_ << std::endl;
+    bm_plus_->startStateKeyUpdateTimer(1);
+    bm_plus_->getCacheController().startRefreshTimer(1);
     server_.listen("localhost", port_);
 }
 
-void BMServer::setupRoutes() {
-    // 添加请求日志记录器
-    server_.set_logger([](const auto& req, const auto& /*res*/) {
-        std::cout << "\nReceived request: " << req.method << " " << req.path << std::endl;
-        std::cout << "Request body: " << req.body << std::endl;
-    });
-    //主界面
-    server_.Get("/", [this](const httplib::Request& req, httplib::Response& res) {
-        res.set_content("Welcome to the BM Server!", "text/plain");
-    });
+void BMServerPlus::setupRoutes() {
     // 更新密钥
     server_.Post("/update-keys", [this](const httplib::Request& req, httplib::Response& res) {
-        std::cout << "\nProcessing update-keys request..." << std::endl;
         try {
             auto json = nlohmann::json::parse(req.body);
-            std::cout << "Parsed request JSON" << std::endl;
-            
             OwnerSecretKey KO{
                 json["levelKeys"].get<std::map<AccessLevel, LevelKey>>(),
                 json["stateKeys"].get<std::map<State, StateKey>>(),
                 json["encapsulationKey"].get<std::string>()
             };
-            std::cout << "Created OwnerSecretKey object" << std::endl;
-            
-            bm_->updateKeys(KO);
-            std::cout << "Updated keys successfully" << std::endl;
-            
-            res.set_content("{\"status\":\"success\"}", "application/json");
+            bm_plus_->updateKeys(KO);
             res.status = 200;
         } catch (const std::exception& e) {
-            std::cerr << "Error updating keys: " << e.what() << std::endl;
             res.status = 500;
             res.set_content(e.what(), "text/plain");
         }
@@ -60,7 +38,7 @@ void BMServer::setupRoutes() {
             // 解析关键词-文档对
             auto keyword = json["keyword"].get<std::string>();
             auto doc = json["document"].get<Document>();
-            bm_->uploadDocument(keyword, doc);
+            bm_plus_->uploadDocument(keyword, doc);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -80,7 +58,7 @@ void BMServer::setupRoutes() {
                     item["document"].get<Document>()
                 );
             }
-            bm_->uploadDocuments(pairs);
+            bm_plus_->uploadDocuments(pairs);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -95,7 +73,7 @@ void BMServer::setupRoutes() {
             // 解析关键词和文档ID
             auto keyword = json["keyword"].get<std::string>();
             auto doc_id = json["document_id"].get<std::string>();
-            bm_->deleteDocument(keyword, doc_id);
+            bm_plus_->deleteDocument(keyword, doc_id);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -115,7 +93,7 @@ void BMServer::setupRoutes() {
                     item["document_id"].get<std::string>()
                 );
             }
-            bm_->deleteDocuments(pairs);
+            bm_plus_->deleteDocuments(pairs);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -125,20 +103,10 @@ void BMServer::setupRoutes() {
 
     // 重建所有索引
     server_.Post("/rebuild-indices", [this](const httplib::Request& req, httplib::Response& res) {
-        std::cout << "\nReceived request: POST /rebuild-indices" << std::endl;
-        std::cout << "Request body: " << req.body << std::endl;
-        
         try {
-            std::cout << "Starting full index rebuild..." << std::endl;
-            std::cout.flush();
-            
-            bm_->rebuildAllIndices();
-            
-            std::cout << "Index rebuild completed successfully" << std::endl;
+            bm_plus_->rebuildAllIndices();
             res.status = 200;
-            
         } catch (const std::exception& e) {
-            std::cerr << "Error rebuilding indices: " << e.what() << std::endl;
             res.status = 500;
             res.set_content(e.what(), "text/plain");
         }
@@ -149,38 +117,15 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             std::string userId = json["userId"];
-            std::string signature = json["signature"];
+            std::string encryptedId = json["encryptedId"];
             std::string hashedKeyword = json["hashedKeyword"];
+            std::cout << "userId: " << userId << ", encryptedId: " << encryptedId << ", hashedKeyword: " << hashedKeyword << std::endl;
+            SearchToken token = bm_plus_->getSearchToken(userId, encryptedId, hashedKeyword);
             
-            std::cout << "Processing token request for user: " << userId << std::endl;
-            
-            SearchToken token = bm_->getSearchToken(userId, signature, hashedKeyword);
-            
-            // 添加 token 内容调试
-            std::cout << "Token content check:" << std::endl;
-            std::cout << "tau1 length: " << token.tau1.length() << std::endl;
-            std::cout << "tau2 length: " << token.tau2.length() << std::endl;
-            std::cout << "tau3 length: " << token.tau3.length() << std::endl;
-            std::cout << "tau4 size: " << token.tau4.size() << std::endl;
-            
-            if (token.isEmpty()) {
-                std::cerr << "Warning: Token is empty!" << std::endl;
-            }
-            
-            try {
-                nlohmann::json tokenJson = token;
-                std::string tokenStr = tokenJson.dump();
-                std::cout << "Serialized token: " << tokenStr << std::endl;
-                
-                res.set_content(tokenStr, "application/json");
-                res.status = 200;
-            } catch (const std::exception& e) {
-                std::cerr << "Token serialization failed: " << e.what() << std::endl;
-                throw;
-            }
-            
+            // 将 token 序列化为 JSON 并返回
+            res.set_content(nlohmann::json(token).dump(), "application/json");
+            res.status = 200;
         } catch (const std::exception& e) {
-            std::cerr << "Server error: " << e.what() << std::endl;
             res.status = 500;
             res.set_content(e.what(), "text/plain");
         }
@@ -190,10 +135,10 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             std::string userId = json["userId"];
-            std::string signature = json["signature"];
-            std::string hashedKeyword = json["hashedKeyword"];
+            std::string encryptedUserId = json["encryptedUserId"];
+            std::string encryptedKeyword = json["encryptedKeyword"];
             SearchToken token = json["token"].get<SearchToken>();
-            auto results = bm_->searchWithToken(userId, signature, hashedKeyword, token);
+            auto results = bm_plus_->searchWithToken(userId, encryptedUserId, encryptedKeyword, token);
             res.set_content(nlohmann::json(results).dump(), "application/json");
             res.status = 200;
         } catch (const std::exception& e) {
@@ -201,13 +146,12 @@ void BMServer::setupRoutes() {
             res.set_content(e.what(), "text/plain");
         }
     });
-
     // 更新用户表
     server_.Post("/update-user-table", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             auto json = nlohmann::json::parse(req.body);
             auto users = json["users"].get<std::map<std::string, User>>();
-            bm_->updateUserTable(users);
+            bm_plus_->updateUserTable(users);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -220,7 +164,7 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             User user = json["user"].get<User>();
-            bm_->updateUser(user);
+            bm_plus_->updateUser(user);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -232,18 +176,10 @@ void BMServer::setupRoutes() {
     server_.Post("/add-user", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             auto json = nlohmann::json::parse(req.body);
-            User user;
-            user.id = json["id"].get<std::string>();
-            user.level = json["level"].get<AccessLevel>();
-            user.state = json["state"].get<State>();
-            user.publicKey = json["publicKey"].get<std::string>();
-            
-            bm_->addUser(user);
-            
-            res.set_content("{\"status\":\"success\"}", "application/json");
+            User user = json["user"].get<User>();
+            bm_plus_->addUser(user);
             res.status = 200;
         } catch (const std::exception& e) {
-            std::cerr << "Error adding user: " << e.what() << std::endl;
             res.status = 500;
             res.set_content(e.what(), "text/plain");
         }
@@ -254,7 +190,7 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             std::string userId = json["userId"].get<std::string>();
-            bm_->deleteUser(userId);
+            bm_plus_->deleteUser(userId);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -267,7 +203,7 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             auto levelKeys = json["levelKeys"].get<std::map<AccessLevel, LevelKey>>();
-            bm_->updateLevelKeys(levelKeys);
+            bm_plus_->updateLevelKeys(levelKeys);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -280,7 +216,7 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             auto stateKeys = json["stateKeys"].get<std::map<State, StateKey>>();
-            bm_->updateStateKeys(stateKeys);
+            bm_plus_->updateStateKeys(stateKeys);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;
@@ -293,7 +229,7 @@ void BMServer::setupRoutes() {
         try {
             auto json = nlohmann::json::parse(req.body);
             std::string encapsulationKey = json["encapsulationKey"].get<std::string>();
-            bm_->updateEncapsulationKey(encapsulationKey);
+            bm_plus_->updateEncapsulationKey(encapsulationKey);
             res.status = 200;
         } catch (const std::exception& e) {
             res.status = 500;

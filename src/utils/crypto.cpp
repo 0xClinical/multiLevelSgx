@@ -1,40 +1,103 @@
 #include "utils/crypto.h"
 #include <openssl/aes.h>
+#include <iostream>
+
 
 std::string CryptoUtils::H1(const std::string& key, const std::string& input) {
-    return computeAES(key, input, "H1");
+    return PRF(key, input);
 }
 
 std::string CryptoUtils::H2(const std::string& key, const std::string& r) {
-    return computeAES(key, r, "H2");
+    return PRF(key, r);
 }
 
 std::string CryptoUtils::H3(const std::string& stateKey, const std::string& keyword) {
-    return computeAES(stateKey, keyword, "H3");
+    return PRF(stateKey, keyword);
 }
 
 std::string CryptoUtils::H4(const std::string& key, const std::string& input) {
-    return computeAES(key, input, "H4");
+    return PRF(key, input);
 }
 
 std::string CryptoUtils::H5(const std::string& key, const std::string& input) {
-    return computeAES(key, input, "H5");
+    return PRF(key, input);
 }
 
-std::string CryptoUtils::F1(const std::string& key, const std::string& id) {
-    return computeAES(key, id, "F1");
+std::string CryptoUtils::PRF(const std::string& key, const std::string& msg) {
+    std::string combined = key + msg;
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256;
+    SHA256_Init(&sha256);
+    SHA256_Update(&sha256, combined.c_str(), combined.length());
+    SHA256_Final(hash, &sha256);
+    return std::string((char*)hash, SHA256_DIGEST_LENGTH);
 }
 
-std::string CryptoUtils::F1_inverse(const std::string& key, const std::string& encrypted_id) {
-    return computeAES_decrypt(key, encrypted_id, "F1");
+std::string CryptoUtils::F1(const std::string& key, const std::string& input) {
+    std::string padded_key = key;
+    padded_key.resize(32, 0);
+    
+    std::string encrypted;
+    encrypted.reserve(input.length());
+    for (size_t i = 0; i < input.length(); i++) {
+        encrypted += input[i] ^ padded_key[i % 32];
+    }
+    return encrypted;
+}
+
+std::string CryptoUtils::F1_inverse(const std::string& key, const std::string& encrypted_input) {
+    std::string padded_key = key;
+    padded_key.resize(32, 0);
+    
+    std::string decrypted;
+    decrypted.reserve(encrypted_input.length());
+    for (size_t i = 0; i < encrypted_input.length(); i++) {
+        decrypted += encrypted_input[i] ^ padded_key[i % 32];
+    }
+    return decrypted;
 }
 
 std::string CryptoUtils::F2(const std::string& key, int level) {
-    return computeAES(key, std::to_string(level), "F2");
+    unsigned char output[16];
+    AES_KEY aes_key;
+    
+    // 填充密钥到32字节
+    std::string padded_key = key;
+    padded_key.resize(32, 0);
+    
+    // 准备输入（level转为固定长度的字符串）
+    std::string level_str = std::to_string(level);
+    std::string padded_input = "F2";
+    padded_input += std::string(1, static_cast<char>(level));  // 直接存储level的值
+    padded_input.resize(16, 0);
+    
+    // 加密
+    AES_set_encrypt_key(reinterpret_cast<const unsigned char*>(padded_key.c_str()), 256, &aes_key);
+    AES_encrypt(reinterpret_cast<const unsigned char*>(padded_input.c_str()), output, &aes_key);
+    
+    return std::string(reinterpret_cast<char*>(output), 16);
 }
 
 std::string CryptoUtils::F2_inverse(const std::string& key, const std::string& encrypted_level) {
-    return computeAES_decrypt(key, encrypted_level, "F2");
+    unsigned char output[16];
+    AES_KEY aes_key;
+    
+    // 填充密钥到32字节
+    std::string padded_key = key;
+    padded_key.resize(32, 0);
+    
+    // 解密
+    AES_set_decrypt_key(reinterpret_cast<const unsigned char*>(padded_key.c_str()), 256, &aes_key);
+    AES_decrypt(reinterpret_cast<const unsigned char*>(encrypted_level.c_str()), output, &aes_key);
+    
+    // 检查前缀并获取level值
+    std::string decrypted(reinterpret_cast<char*>(output), 16);
+    if (decrypted.substr(0, 2) != "F2") {
+        throw std::runtime_error("Invalid F2 prefix");
+    }
+    
+    // 直接返回第3个字节的值作为字符串
+    return std::to_string(static_cast<int>(decrypted[2]));
 }
 
 std::string CryptoUtils::generateRandomString(size_t length) {
@@ -45,6 +108,21 @@ std::string CryptoUtils::generateRandomString(size_t length) {
     return std::string(reinterpret_cast<char*>(buf), length);
 }
 
+std::string CryptoUtils::generateRandomKey(size_t length) {
+    unsigned char key[length];
+    if (RAND_bytes(key, length) != 1) {
+        throw std::runtime_error("Failed to generate random key");
+    }
+    
+    // 转换为十六进制字符串
+    std::string hexKey;
+    for (size_t i = 0; i < length; i++) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", key[i]);
+        hexKey += hex;
+    }
+    return hexKey;
+}
 std::string CryptoUtils::bytesToHex(const unsigned char* bytes, size_t len) {
     std::string hex;
     for (size_t i = 0; i < len; i++) {
@@ -56,22 +134,41 @@ std::string CryptoUtils::bytesToHex(const unsigned char* bytes, size_t len) {
 }
 
 std::string CryptoUtils::xorStrings(const std::string& a, const std::string& b) {
-    std::string result = a;
-    for (size_t i = 0; i < result.length(); i++) {
-        result[i] ^= b[i % b.length()];
+    // 总是使用较长的字符串作为基础
+    const std::string& longer = (a.length() >= b.length()) ? a : b;
+    const std::string& shorter = (a.length() >= b.length()) ? b : a;
+    
+    std::string result = longer;
+    
+    // 循环使用较短的字符串进行异或
+    for (size_t i = 0; i < longer.length(); i++) {
+        result[i] ^= shorter[i % shorter.length()];
     }
+    
     return result;
 }
-
+size_t CryptoUtils::stringToSize(const std::string& input) {
+    // 计算完整的哈希
+    std::string hash = computeDigest(input);
+    
+    // 确保使用一致的字节序转换
+    size_t result = 0;
+    for (size_t i = 0; i < sizeof(size_t); i++) {
+        result = (result << 8) | (static_cast<unsigned char>(hash[i]));
+    }          
+    return result;
+}
 std::pair<size_t, std::string> CryptoUtils::xorPair(
     const std::pair<size_t, std::string>& a,
     const std::string& b) {
-    // 将size_t转换为string进行异或
-    std::string first = std::to_string(a.first);
-    std::string xored_first = xorStrings(first, b);
-    size_t new_first = std::stoull(xored_first);
     
-    // 异或第二个元素
+    // 将哈希字符串转换为数字
+    size_t b_num = stringToSize(b);
+    
+    // 直接对数字进行异或
+    size_t new_first = a.first ^ b_num;
+    
+    // 第二个元素保持字符串异或
     std::string new_second = xorStrings(a.second, b);
     
     return {new_first, new_second};
@@ -83,12 +180,8 @@ std::string CryptoUtils::computeDigest(const std::string& input) {
     SHA256_Init(&sha256);
     SHA256_Update(&sha256, input.c_str(), input.length());
     SHA256_Final(hash, &sha256);
-    
-    std::stringstream ss;
-    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
-    }
-    return ss.str();
+   // 直接返回二进制数据
+    return std::string(reinterpret_cast<char*>(hash), SHA256_DIGEST_LENGTH);
 }
 
 std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
@@ -125,203 +218,292 @@ std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
 std::string CryptoUtils::computeAES(const std::string& key, 
                                    const std::string& input,
                                    const std::string& prefix) {
-    unsigned char output[16];
-    AES_KEY aes_key;
+    // 准备输入 (确保总长度是16的倍数)
+    std::string padded_input = prefix + input;
+    size_t block_size = ((padded_input.length() + 15) / 16) * 16;
+    padded_input.resize(block_size, 0);
     
-    // 填充密钥到32字节
+    // 准备密钥 (32字节)
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 准备输入（添加前缀并填充到16字节）
-    std::string padded_input = prefix + input;
-    padded_input.resize(16, 0);
-    
-    // 加密
+    // 准备输出缓冲区
+    std::vector<unsigned char> output(block_size);
+    AES_KEY aes_key;
     AES_set_encrypt_key((unsigned char*)padded_key.c_str(), 256, &aes_key);
-    AES_encrypt((unsigned char*)padded_input.c_str(), output, &aes_key);
     
-    return std::string((char*)output, 16);
+    // 使用CBC模式加密
+    unsigned char iv[16] = {0};  // 初始化向量
+    AES_cbc_encrypt(
+        (unsigned char*)padded_input.c_str(),
+        output.data(),
+        block_size,
+        &aes_key,
+        iv,
+        AES_ENCRYPT
+    );
+    
+    // 存储原始长度和加密数据
+    size_t original_length = input.length();
+    std::string result;
+    result.reserve(sizeof(size_t) + block_size);
+    result.append(reinterpret_cast<char*>(&original_length), sizeof(size_t));
+    result.append((char*)output.data(), block_size);
+    
+    return result;
 }
 
 // AES 解密实现
 std::string CryptoUtils::computeAES_decrypt(const std::string& key, 
                                           const std::string& encrypted_input,
                                           const std::string& prefix) {
-    unsigned char output[16];
-    AES_KEY aes_key;
+    // 首先读取原始长度
+    if (encrypted_input.length() < sizeof(size_t)) {
+        throw std::runtime_error("Invalid encrypted input");
+    }
     
-    // 填充密钥到32字节
+    size_t original_length;
+    memcpy(&original_length, encrypted_input.data(), sizeof(size_t));
+    
+    // 获取加密数据部分
+    std::string encrypted_data = encrypted_input.substr(sizeof(size_t));
+    if (encrypted_data.length() % 16 != 0) {
+        throw std::runtime_error("Invalid input length for AES decryption");
+    }
+    
+    // 准备密钥
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 解密
+    // 准备输出缓冲区
+    std::vector<unsigned char> output(encrypted_data.length());
+    AES_KEY aes_key;
     AES_set_decrypt_key((unsigned char*)padded_key.c_str(), 256, &aes_key);
-    AES_decrypt((unsigned char*)encrypted_input.c_str(), output, &aes_key);
     
-    // 移除前缀和填充
-    std::string decrypted((char*)output, 16);
-    decrypted = decrypted.substr(prefix.length());
-    decrypted = decrypted.substr(0, decrypted.find('\0'));
+    // 使用CBC模式解密
+    unsigned char iv[16] = {0};  // 初始化向量
+    AES_cbc_encrypt(
+        (unsigned char*)encrypted_data.c_str(),
+        output.data(),
+        encrypted_data.length(),
+        &aes_key,
+        iv,
+        AES_DECRYPT
+    );
     
-    return decrypted;
+    // 验证前缀并还原原始数据
+    std::string decrypted((char*)output.data(), output.size());
+    if (decrypted.substr(0, prefix.length()) != prefix) {
+        throw std::runtime_error("Invalid prefix in decrypted data");
+    }
+    
+    // 使用存储的原始长度来还原数据
+    return decrypted.substr(prefix.length(), original_length);
 }
-
-// 使用公钥加密
-std::string CryptoUtils::encryptWithPrivateKey(const std::string& data, const std::string& private_key) {
-    std::string encrypted;
-    
-    // 从PEM创建公钥
+// 使用私钥签名
+std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::string& private_key) {
+    // 从PEM创建私钥
     EVP_PKEY* pkey = nullptr;
     BIO* bio = BIO_new_mem_buf(private_key.c_str(), -1);
     if (!bio) return "";
     
     pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
-    
     if (!pkey) return "";
     
-    // 创建加密上下文
-    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
+    // 创建签名上下文
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // 初始化加密
-    if (EVP_PKEY_encrypt_init(ctx) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
+    // 初始化签名
+    if (EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, pkey) <= 0) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // 确定输出长度
-    size_t outlen;
-    if (EVP_PKEY_encrypt(ctx, nullptr, &outlen, 
-        reinterpret_cast<const unsigned char*>(data.c_str()), 
-        data.length()) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
+    // 更新要签名的数据
+    if (EVP_DigestSignUpdate(ctx, data.c_str(), data.length()) <= 0) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // 执行加密
-    unsigned char* out = (unsigned char*)OPENSSL_malloc(outlen);
-    if (!out) {
-        EVP_PKEY_CTX_free(ctx);
+    // 获取签名长度
+    size_t sig_len;
+    if (EVP_DigestSignFinal(ctx, nullptr, &sig_len) <= 0) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    if (EVP_PKEY_encrypt(ctx, out, &outlen,
-        reinterpret_cast<const unsigned char*>(data.c_str()),
-        data.length()) <= 0) {
-        OPENSSL_free(out);
-        EVP_PKEY_CTX_free(ctx);
+    // 生成签名
+    unsigned char* sig = (unsigned char*)OPENSSL_malloc(sig_len);
+    if (!sig) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // Base64编码结果
-    encrypted = base64Encode(std::string(
-        reinterpret_cast<char*>(out), 
-        outlen
+    if (EVP_DigestSignFinal(ctx, sig, &sig_len) <= 0) {
+        OPENSSL_free(sig);
+        EVP_MD_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+    
+    // Base64编码签名
+    std::string signature = base64Encode(std::string(
+        reinterpret_cast<char*>(sig), 
+        sig_len
     ));
     
-    OPENSSL_free(out);
-    EVP_PKEY_CTX_free(ctx);
+    OPENSSL_free(sig);
+    EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pkey);
     
-    return encrypted;
+    return signature;
 }
 
-// 使用私钥解密
-std::string CryptoUtils::decryptWithPublicKey(const std::string& encrypted_data, const std::string& public_key) {
-    // Base64解码
-    std::string decoded = base64Decode(encrypted_data);
+// 使用公钥验证签名
+bool CryptoUtils::verifySignature(const std::string& data, 
+                                 const std::string& signature,
+                                 const std::string& public_key) {
+    // Base64解码签名
+    std::string decoded_sig = base64Decode(signature);
     
-    // 从PEM创建私钥
+    // 从PEM创建公钥
     EVP_PKEY* pkey = nullptr;
     BIO* bio = BIO_new_mem_buf(public_key.c_str(), -1);
-    if (!bio) return "";
+    if (!bio) return false;
     
     pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
+    if (!pkey) return false;
     
-    if (!pkey) return "";
-    
-    // 创建解密上下文
-    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
+    // 创建验证上下文
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         EVP_PKEY_free(pkey);
-        return "";
+        return false;
     }
     
-    // 初始化解密
-    if (EVP_PKEY_decrypt_init(ctx) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
+    // 初始化验证
+    if (EVP_DigestVerifyInit(ctx, nullptr, EVP_sha256(), nullptr, pkey) <= 0) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
-        return "";
+        return false;
     }
     
-    // 确定输出长度
-    size_t outlen;
-    if (EVP_PKEY_decrypt(ctx, nullptr, &outlen,
-        reinterpret_cast<const unsigned char*>(decoded.c_str()),
-        decoded.length()) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
+    // 更新要验证的数据
+    if (EVP_DigestVerifyUpdate(ctx, data.c_str(), data.length()) <= 0) {
+        EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
-        return "";
+        return false;
     }
     
-    // 执行解密
-    unsigned char* out = (unsigned char*)OPENSSL_malloc(outlen);
-    if (!out) {
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        return "";
-    }
+    // 验证签名
+    int ret = EVP_DigestVerifyFinal(ctx, 
+        reinterpret_cast<const unsigned char*>(decoded_sig.c_str()),
+        decoded_sig.length());
     
-    if (EVP_PKEY_decrypt(ctx, out, &outlen,
-        reinterpret_cast<const unsigned char*>(decoded.c_str()),
-        decoded.length()) <= 0) {
-        OPENSSL_free(out);
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(pkey);
-        return "";
-    }
-    
-    std::string decrypted(reinterpret_cast<char*>(out), outlen);
-    
-    OPENSSL_free(out);
-    EVP_PKEY_CTX_free(ctx);
+    EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pkey);
     
-    return decrypted;
+    return (ret == 1);
 }
 
 std::string CryptoUtils::base64Encode(const std::string& input) {
-    BIO* b64 = BIO_new(BIO_f_base64());
-    BIO* bmem = BIO_new(BIO_s_mem());
-    b64 = BIO_push(b64, bmem);
-    BIO_write(b64, input.c_str(), input.length());
-    BIO_flush(b64);
+    static const char base64_chars[] = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     
-    BUF_MEM* bptr;
-    BIO_get_mem_ptr(b64, &bptr);
-    std::string output(bptr->data, bptr->length - 1);  // -1 to remove newline
-    
-    BIO_free_all(b64);
-    return output;
+    std::string ret;
+    int i = 0;
+    int j = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+    size_t in_len = input.size();
+    const unsigned char* bytes_to_encode = reinterpret_cast<const unsigned char*>(input.data());
+
+    while (in_len--) {
+        char_array_3[i++] = *(bytes_to_encode++);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for(i = 0; i < 4; i++)
+                ret += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for(j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; j < i + 1; j++)
+            ret += base64_chars[char_array_4[j]];
+
+        while((i++ < 3))
+            ret += '=';
+    }
+
+    return ret;
 }
 
-std::string CryptoUtils::base64Decode(const std::string& input) {
-    BIO* b64 = BIO_new(BIO_f_base64());
-    BIO* bmem = BIO_new_mem_buf(input.c_str(), input.length());
-    bmem = BIO_push(b64, bmem);
+std::string CryptoUtils::base64Decode(const std::string& encoded_string) {
+    static const std::string base64_chars = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     
-    std::vector<char> buffer(input.length());
-    int decoded_size = BIO_read(bmem, buffer.data(), input.length());
-    BIO_free_all(b64);
-    
-    return std::string(buffer.data(), decoded_size);
+    int in_len = encoded_string.size();
+    int i = 0;
+    int j = 0;
+    int in_ = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    std::string ret;
+
+    while (in_len-- && (encoded_string[in_] != '=') && 
+           (isalnum(encoded_string[in_]) || (encoded_string[in_] == '+') || 
+            (encoded_string[in_] == '/'))) {
+        char_array_4[i++] = encoded_string[in_]; in_++;
+        if (i == 4) {
+            for (i = 0; i < 4; i++)
+                char_array_4[i] = base64_chars.find(char_array_4[i]);
+
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+            for (i = 0; (i < 3); i++)
+                ret += char_array_3[i];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (j = i; j < 4; j++)
+            char_array_4[j] = 0;
+
+        for (j = 0; j < 4; j++)
+            char_array_4[j] = base64_chars.find(char_array_4[j]);
+
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+        for (j = 0; (j < i - 1); j++) 
+            ret += char_array_3[j];
+    }
+
+    return ret;
 }

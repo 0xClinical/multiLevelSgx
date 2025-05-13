@@ -2,3 +2,4 @@ wikiextractor
 nltk
 requests
 tqdm
+matplotlib>=3.0.0

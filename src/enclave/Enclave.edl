@@ -1,0 +1,188 @@
+enclave {
+    include "sgx_tcrypto.h"
+    include "sgx_error.h"
+    from "sgx_tstdc.edl" import *;
+    from "sgx_tae_service.edl" import *;
+    
+    trusted {
+        // 初始化方法
+        public sgx_status_t ecall_init_bm_scheme();
+        public sgx_status_t ecall_init_bm_plus_scheme();
+        
+        // 用户管理接口
+        public sgx_status_t ecall_bm_add_user(
+            [in, string] const char* user_id,
+            uint8_t level,
+            uint8_t state,
+            [in, string] const char* public_key
+        );
+        
+        public sgx_status_t ecall_bm_plus_add_user(
+            [in, string] const char* user_id,
+            uint8_t level,
+            uint8_t state,
+            [in, string] const char* public_key
+        );
+        
+        // BM 方案操作接口
+        public sgx_status_t ecall_bm_upload_document(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_id,
+            uint8_t level,
+            uint8_t state
+        );
+        // 新增的批量操作函数
+        public sgx_status_t ecall_bm_upload_documents(
+            [in, string] const char* keyword, 
+            [in, string] const char* docs_json, 
+            size_t docs_json_size
+        );
+        
+        public sgx_status_t ecall_bm_search(
+            [in, string] const char* user_id,
+            [in, string] const char* encrypted_id,
+            [in, string] const char* keyword,
+            size_t max_doc,
+            [user_check] char* result_buffer,
+            size_t result_capacity,
+            [out] size_t* result_size
+        );
+        
+        public sgx_status_t ecall_bm_delete(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_id
+        );
+          public sgx_status_t ecall_bm_delete_documents(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_ids_json,
+            size_t doc_count
+        );
+
+        public sgx_status_t ecall_bm_rebuild_indices();
+        
+        // BM Plus 方案操作接口
+        public sgx_status_t ecall_bm_plus_upload_document(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_id,
+            uint8_t level,
+            uint8_t state
+        );
+        
+        public sgx_status_t ecall_bm_plus_upload_documents(
+            [in, string] const char* keyword, 
+            [in, string] const char* docs_json, 
+            size_t docs_json_size
+        );
+        
+        public sgx_status_t ecall_bm_plus_search(
+            [in, string] const char* user_id,
+            [in, string] const char* encrypted_id,
+            [in, string] const char* keyword,
+            size_t max_doc,
+            [user_check] char* result_buffer,
+            size_t result_capacity,
+            [out] size_t* result_size
+        );
+        
+        public sgx_status_t ecall_bm_plus_delete(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_id
+        );
+        
+        public sgx_status_t ecall_bm_plus_delete_documents(
+            [in, string] const char* keyword,
+            [in, string] const char* doc_ids_json,
+            size_t doc_ids_json_size
+        );
+        
+        public sgx_status_t ecall_bm_plus_rebuild_indices();
+        
+        public sgx_status_t ecall_bm_plus_initialize_clusters();
+        
+        public sgx_status_t ecall_bm_plus_reencrypt_cluster(
+            uint32_t cluster_index
+        );
+        
+    };
+
+    untrusted {
+        void ocall_print_string([in, string] const char* str);
+        
+        // EDBController 相关的 OCALL
+        void ocall_edb_search(
+            [in, size=token_size] const char* token_data,
+            size_t token_size,
+            size_t max_doc,
+            [user_check] uint8_t* result_data,
+            size_t max_result_size,
+            [out] size_t* actual_size
+        );
+        
+        void ocall_edb_update_index(
+            [in, string] const char* keyword,
+            [user_check] const char* nodes_data,
+            size_t nodes_size,
+            [user_check] const char* table_data,
+            size_t table_size,
+            [user_check] const char* docs_data,
+            size_t docs_size
+        );
+        
+        void ocall_edb_get_keyword_data(
+            [in, string] const char* keyword,
+            [user_check] uint8_t* data_buffer,
+            size_t max_data_size,
+            [out] size_t* actual_size
+        );
+        
+        // 新增的 DatasetLoader 相关 OCALL
+        void ocall_dataset_get_bogus_document([in, string] const char* keyword, uint8_t max_state, uint8_t max_level,
+                                            [user_check] uint8_t* doc_buffer, size_t max_doc_size,
+                                            [out] size_t* actual_size);
+        void ocall_dataset_get_all_clusters([user_check] uint8_t* data_buffer, size_t max_data_size,
+                                          [out] size_t* actual_size);
+        
+        // 加密相关OCALL
+        sgx_status_t ocall_f2_encrypt([in, string] const char* input, size_t input_len, 
+                                     [in, string] const char* key, size_t key_len,
+                                     [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_f2_decrypt([in, string] const char* encrypted, size_t encrypted_len, 
+                                     [in, string] const char* key, size_t key_len,
+                                     [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_generate_key_pair([out, size=pubkey_len] char* pubkey, [out] size_t* pubkey_len,
+                                           [out, size=privkey_len] char* privkey, [out] size_t* privkey_len);
+        
+        sgx_status_t ocall_sign_data([in, string] const char* data, size_t data_len,
+                                   [in, string] const char* private_key, size_t private_key_len,
+                                   [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_verify_signature([out] int* result,
+                                          [in, string] const char* data, size_t data_len,
+                                          [in, string] const char* signature, size_t signature_len,
+                                          [in, string] const char* public_key, size_t public_key_len);
+        
+        sgx_status_t ocall_base64_encode([in, string] const char* input, size_t input_len,
+                                       [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_base64_decode([in, string] const char* input, size_t input_len,
+                                       [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_generate_random(size_t len,
+                                         [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_aes_encrypt([in, string] const char* data, size_t data_len,
+                                     [in, string] const char* key, size_t key_len,
+                                     [in, string] const char* iv, size_t iv_len,
+                                     [out, size=out_len] char* result, [out] size_t* out_len);
+        
+        sgx_status_t ocall_aes_decrypt([in, string] const char* data, size_t data_len,
+                                     [in, string] const char* key, size_t key_len,
+                                     [in, string] const char* iv, size_t iv_len,
+                                     [out, size=out_len] char* result, [out] size_t* out_len);
+
+        sgx_status_t ocall_string_to_size([in, string] const char* data, size_t data_len,
+                                        [out, size=out_len] char* result, [out] size_t* out_len);
+    };
+};

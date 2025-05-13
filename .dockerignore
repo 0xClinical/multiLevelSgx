@@ -1,0 +1,7 @@
+data/raw
+#只保留data/processed/cluster_3,其他的忽略
+data/processed/cluster_10
+data/processed/cluster_256
+data/processed/cluster_512
+data/processed/statistics
+./build

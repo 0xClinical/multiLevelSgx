@@ -20,3 +20,4 @@ void Timer::stop() {
 Timer::~Timer() {
     stop();
 } 
+

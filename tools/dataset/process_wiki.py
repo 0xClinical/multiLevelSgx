@@ -3,122 +3,212 @@ import json
 import nltk
 from nltk.stem import PorterStemmer
 from nltk.tokenize import word_tokenize
-from wikiextractor import WikiExtractor
 import random
 from tqdm import tqdm
 import requests
-import bz2
+import subprocess
+import tempfile
+from collections import Counter
 
 class WikiDataProcessor:
     def __init__(self):
         # 初始化Porter词干提取器
         self.stemmer = PorterStemmer()
-        # 下载必要的NLTK数据
-        nltk.download('punkt')
+        
+        # 确保下载所有必要的 NLTK 数据
+        required_packages = ['punkt', 'punkt_tab']
+        for package in required_packages:
+            try:
+                nltk.data.find(f'tokenizers/{package}')
+            except LookupError:
+                print(f"Downloading {package}...")
+                nltk.download(package, quiet=False)
+        
         # 设置访问级别
         self.access_levels = [1, 2, 3, 4, 5]  # 1最低，5最高
+        self.target_keywords = 500  # 目标关键词数量
+    def process_wiki_dump(self, input_file, output_dir, max_articles=10000):
+        # 创建临时目录存放提取的文本
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print("Extracting wiki text...")
+            
+            # 使用命令行方式运行 WikiExtractor
+            subprocess.run([
+                'wikiextractor',
+                '--output', temp_dir,
+                '--bytes', '1M',
+                '--json',
+                '--processes', '4',
+                input_file
+            ])
+            
+            # 第一遍：收集关键词频率
+            print("First pass: collecting keyword frequencies...")
+            keyword_counts = Counter()
+            article_count = 0
+            
+            # 遍历提取的文件
+            for root, _, files in os.walk(temp_dir):
+                for filename in files:
+                    if article_count >= max_articles:
+                        break
+                        
+                    if filename.startswith('wiki_'):
+                        filepath = os.path.join(root, filename)
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                if article_count >= max_articles:
+                                    break
+                                    
+                                try:
+                                    article = json.loads(line)
+                                    keywords = self._extract_keywords(article['text'])
+                                    keyword_counts.update(keywords)
+                                    article_count += 1
+                                except json.JSONDecodeError:
+                                    continue
+            
+            # 选择最常用的关键词
+            top_keywords = set(k for k, _ in keyword_counts.most_common(self.target_keywords))
+            print(f"Selected {len(top_keywords)} most common keywords")
+            
+            # 第二遍：只使用选定的关键词构建数据集
+            print("Second pass: building dataset with selected keywords...")
+            keyword_file_pairs = {}
+            article_count = 0
+            
+            # 遍历提取的文件
+            for root, _, files in os.walk(temp_dir):
+                for filename in files:
+                    if article_count >= max_articles:
+                        break
+                        
+                    if filename.startswith('wiki_'):
+                        filepath = os.path.join(root, filename)
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                if article_count >= max_articles:
+                                    break
+                                    
+                                try:
+                                    article = json.loads(line)
+                                    doc_id = self._generate_file_id(article['id'])
+                                    keywords = self._extract_keywords(article['text'])
+                                    
+                                    # 只保留选定的关键词
+                                    filtered_keywords = keywords & top_keywords
+                                    
+                                    for keyword in filtered_keywords:
+                                        if keyword not in keyword_file_pairs:
+                                            keyword_file_pairs[keyword] = set()
+                                        keyword_file_pairs[keyword].add(doc_id)
+                                    
+                                    article_count += 1
+                                    if article_count % 100 == 0:
+                                        print(f"Processed {article_count} articles")
+                                        
+                                except json.JSONDecodeError:
+                                    continue
+            
+            # 生成最终数据集
+            dataset = self._generate_dataset(keyword_file_pairs)
+            
+            # 保存数据集
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, 'processed_wiki_dataset.json')
+            self._save_dataset(dataset, output_file)
+            
+            print(f"Dataset saved to {output_file}")
+            print(f"Total articles processed: {article_count}")
         
-    def process_wiki_dump(self, input_file, output_dir):
-        # 1. 使用WikiExtractor提取文本
-        extractor = WikiExtractor({
-            'input': input_file,
-            'output': output_dir + '/extracted',
-            'bytes': '1M',
-            'links': True,
-            'sections': True,
-            'lists': True
-        })
-        extractor.extract()
-        
-        # 2. 处理提取的文本
-        keyword_file_pairs = {}  # {keyword: set(file_ids)}
-        file_metadata = {}       # {file_id: {keywords: set(), content: str}}
-        
-        # 遍历提取的文件
-        for root, _, files in os.walk(output_dir + '/extracted'):
-            for file in tqdm(files, desc="Processing wiki files"):
-                if file.startswith('wiki_'):
-                    self._process_file(os.path.join(root, file), 
-                                    keyword_file_pairs, 
-                                    file_metadata)
-        
-        # 3. 生成最终数据集
-        dataset = self._generate_dataset(keyword_file_pairs, file_metadata)
-        
-        # 4. 保存数据集
-        self._save_dataset(dataset, output_dir + '/processed_wiki_dataset.json')
-        
-        # 5. 打印统计信息
-        self._print_stats(keyword_file_pairs, file_metadata)
-        
-    def _process_file(self, filepath, keyword_file_pairs, file_metadata):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    article = json.loads(line)
-                    doc_id = self._generate_file_id(article['id'])
-                    
-                    # 提取并处理关键词
-                    keywords = self._extract_keywords(article['text'])
-                    
-                    # keyword_file_pairs 用于统计每个关键词对应的文档数量
-                    # 这对于评估数据集的分布很有用
-                    for keyword in keywords:
-                        if keyword not in keyword_file_pairs:
-                            keyword_file_pairs[keyword] = set()
-                        keyword_file_pairs[keyword].add(doc_id)
-                    
-                    # 只存储必要的元数据
-                    file_metadata[doc_id] = {
-                        'keywords': keywords,
-                        'level': random.choice(self.access_levels)
-                    }
-                    
-                except json.JSONDecodeError:
-                    continue
-                
     def _extract_keywords(self, text):
-        # 分词
-        tokens = word_tokenize(text.lower())
-        # 词干提取
-        stemmed_words = [self.stemmer.stem(word) for word in tokens]
-        # 过滤关键词
-        keywords = set(word for word in stemmed_words 
-                      if word.isalnum() and len(word) > 2)
-        return keywords
+        """提取和处理关键词"""
+        try:
+            # 使用简单的分词方式，避免依赖复杂的NLTK功能
+            words = text.lower().split()
+            # 词干提取
+            stemmed_words = set(self.stemmer.stem(word) for word in words 
+                              if word.isalnum() and len(word) > 2)
+            return stemmed_words
+        except Exception as e:
+            print(f"Warning: Error in keyword extraction: {e}")
+            return set()
         
-    def _generate_dataset(self, keyword_file_pairs, file_metadata):
-        dataset = []
-        for file_id, meta in file_metadata.items():
-            doc = {
-                'id': file_id,
-                'keywords': list(meta['keywords']),
-                'level': meta['level'],
-                'state': 0
-            }
-            dataset.append(doc)
+    def _generate_dataset(self, keyword_file_pairs):
+        dataset = {
+            'keyword_docs': {},   # 关键词到文档ID的映射
+            'docs_metadata': {}   # 文档的元数据
+        }
+        
+        # 遍历每个关键词及其对应的文档
+        for keyword, doc_ids in keyword_file_pairs.items():
+            # 正确存储：关键词作为键，文档ID列表作为值
+            dataset['keyword_docs'][keyword] = list(doc_ids)
+            
+            # 为每个文档添加元数据
+            for doc_id in doc_ids:
+                if doc_id not in dataset['docs_metadata']:
+                    dataset['docs_metadata'][doc_id] = {
+                        'id': doc_id,                    # 文档ID
+                        'keywords': [],                  # 该文档的关键词列表
+                        'level': random.choice(self.access_levels),
+                        'state': 0
+                    }
+                # 将当前关键词添加到文档的关键词列表中
+                dataset['docs_metadata'][doc_id]['keywords'].append(keyword)
+
         return dataset
         
+    def _print_stats(self, dataset):
+        """打印详细的数据集统计信息"""
+        # 计算关键词-文件对的总数
+        total_pairs = sum(len(doc_ids) for doc_ids in dataset['keyword_docs'].values())
+        
+        # 计算唯一文件数
+        unique_files = len(dataset['docs_metadata'])
+        
+        # 计算唯一关键词数
+        unique_keywords = len(dataset['keyword_docs'])
+        
+        print("\nDataset Statistics:")
+        print(f"Total keyword/file pairs: {total_pairs:,}")
+        print(f"Total unique files: {unique_files:,}")
+        print(f"Total unique keywords: {unique_keywords:,}")
+        
+        # 计算每个访问级别的文件数量
+        level_distribution = {}
+        for doc_meta in dataset['docs_metadata'].values():
+            level = doc_meta['level']
+            level_distribution[level] = level_distribution.get(level, 0) + 1
+        
+        print("\nAccess Level Distribution:")
+        for level in sorted(level_distribution.keys()):
+            count = level_distribution[level]
+            percentage = (count / unique_files) * 100
+            print(f"Level {level}: {count:,} files ({percentage:.2f}%)")
+        
+        # 计算关键词分布统计
+        keyword_counts = [(k, len(v)) for k, v in dataset['keyword_docs'].items()]
+        keyword_counts.sort(key=lambda x: x[1], reverse=True)
+        
+        print("\nTop 10 Keywords by Document Count:")
+        for keyword, count in keyword_counts[:10]:
+            print(f"{keyword}: {count:,} documents")
+        
+        # 计算平均每个文档的关键词数
+        total_keywords_in_docs = sum(len(meta['keywords']) 
+                                   for meta in dataset['docs_metadata'].values())
+        avg_keywords_per_doc = total_keywords_in_docs / unique_files
+        
+        print(f"\nAverage keywords per document: {avg_keywords_per_doc:.2f}")
+
     def _save_dataset(self, dataset, output_file):
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(dataset, f, indent=2)
-            
-    def _print_stats(self, keyword_file_pairs, file_metadata):
-        total_pairs = sum(len(files) for files in keyword_file_pairs.values())
-        print(f"\nDataset Statistics:")
-        print(f"Total keyword/file pairs: {total_pairs}")
-        print(f"Total unique files: {len(file_metadata)}")
-        print(f"Total unique keywords: {len(keyword_file_pairs)}")
         
-        # 打印访问级别分布
-        level_dist = {}
-        for meta in file_metadata.values():
-            level = meta['level']
-            level_dist[level] = level_dist.get(level, 0) + 1
-        print("\nAccess Level Distribution:")
-        for level, count in sorted(level_dist.items()):
-            print(f"Level {level}: {count} files")
-
+        # 保存后打印统计信息
+        self._print_stats(dataset)
+            
     def _generate_file_id(self, article_id):
         """生成标准化的文件标识符
         
@@ -150,7 +240,7 @@ class WikiDataProcessor:
 
 def download_wiki_dump(output_path):
     """下载维基百科数据集"""
-    url = "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2"
+    url = "https://dumps.wikimedia.org/simplewiki/latest/simplewiki-latest-pages-articles.xml.bz2"
     
     # 创建目录
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
