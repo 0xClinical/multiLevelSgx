@@ -16,21 +16,21 @@ EDBController::search(const SearchToken& token, size_t max_doc) {
         }
         
 
-        // 详细打印查找表中存储的值
+       
         size_t stored = list.lookupTable.at(token.tau2);
        
-        // 详细打印tau3转换后的值
+        
         size_t tau3_num = CryptoUtils::stringToSize(token.tau3);
     
-        // 详细打印异或结果（地址）
+   
         size_t addr = stored ^ tau3_num;
     
         
         std::string z0 = token.tau1;
         
-        // 遍历链表
+        
         while (true) {
-            // 检查是否达到最大结果数量限制
+           
             if (max_doc > 0 && results.size() >= max_doc) {
                 std::cout << "Reached maximum result limit (" << max_doc << "), stopping search\n";
                 return results;
@@ -41,11 +41,11 @@ EDBController::search(const SearchToken& token, size_t max_doc) {
           
                 auto [next_addr, z1] = node.a2;
                 
-                // 如果存储的下一个地址为0，说明是链表末尾
+        
                 if (next_addr == 0) {
                     
                     
-                    // 处理当前节点
+             
                     std::string h2 = CryptoUtils::H2(z0, node.a3);
                     
                     bool flag = false;
@@ -71,10 +71,10 @@ EDBController::search(const SearchToken& token, size_t max_doc) {
                 std::string h2 = CryptoUtils::H2(z0, node.a3);
                 size_t h2_num = CryptoUtils::stringToSize(h2);
                 
-                // 计算下一个地址
+               
                 size_t next = next_addr ^ h2_num;
                 
-                // 尝试所有状态密钥
+            
                 bool flag = false;
                 std::string res;
                 
@@ -94,7 +94,6 @@ EDBController::search(const SearchToken& token, size_t max_doc) {
                    
                 }
                 
-                // 更新地址继续遍历
                 addr = next;
                 z0 = CryptoUtils::xorStrings(z1, h2);
             } catch (const std::exception& e) {
@@ -132,6 +131,6 @@ EncryptedList EDBController::getKeywordData(const Keyword& keyword) {
             it->second.documents
         };
     }
-    return {}; // 返回空数据
+    return {}; 
 }
 

@@ -27,10 +27,10 @@ std::string CryptoUtils::H5(const std::string& key, const std::string& input) {
 std::string CryptoUtils::PRF(const std::string& z, const std::string& r) {
     sgx_sha256_hash_t hash;
     
-    // 创建一个临时缓冲区，包含z和r
+    
     std::string combined = z + r;
     
-    // 使用SGX的SHA-256函数
+   
     sgx_status_t status = sgx_sha256_msg(
         (const uint8_t*)combined.c_str(),
         combined.length(),
@@ -38,7 +38,6 @@ std::string CryptoUtils::PRF(const std::string& z, const std::string& r) {
     );
     
     if (status != SGX_SUCCESS) {
-        // 处理错误
         return "";
     }
     
@@ -70,13 +69,13 @@ std::string CryptoUtils::F1_inverse(const std::string& key, const std::string& e
 }
 
 std::string CryptoUtils::xorStrings(const std::string& a, const std::string& b) {
-    // 总是使用较长的字符串作为基础
+   
     const std::string& longer = (a.length() >= b.length()) ? a : b;
     const std::string& shorter = (a.length() >= b.length()) ? b : a;
     
     std::string result = longer;
     
-    // 循环使用较短的字符串进行异或
+ 
     for (size_t i = 0; i < longer.length(); i++) {
         result[i] ^= shorter[i % shorter.length()];
     }
@@ -84,7 +83,7 @@ std::string CryptoUtils::xorStrings(const std::string& a, const std::string& b) 
     return result;
 }
 
-// SGX版本修改为：
+
 std::string CryptoUtils::computeDigest(const std::string& input) {
     sgx_sha256_hash_t hash;
     
@@ -98,12 +97,12 @@ std::string CryptoUtils::computeDigest(const std::string& input) {
         return "";
     }
     
-    // 直接返回二进制数据
+ 
     return std::string((char*)hash, sizeof(hash));
 }
 
 size_t CryptoUtils::stringToSize(const std::string& input) {
-    // 先计算哈希，确保输入是一致的格式
+  
     sgx_sha256_hash_t hash;
     sgx_status_t status = sgx_sha256_msg(
         (const uint8_t*)input.c_str(),
@@ -112,35 +111,35 @@ size_t CryptoUtils::stringToSize(const std::string& input) {
     );
     
     if (status != SGX_SUCCESS) {
-        // 处理错误，返回一个安全的默认值
-        return 1; // 不要返回0，避免除零错误
+        
+        return 1; 
     }
     
-    // 转换为size_t
+
     size_t result = 0;
     for (size_t i = 0; i < sizeof(size_t) && i < sizeof(hash); i++) {
         result = (result << 8) | (static_cast<unsigned char>(hash[i]));
     }
     
-    // 确保永不返回0（避免除零错误）
+   
     return result ? result : 1;
 }
 
 // F2加密函数
 std::string CryptoUtils::F2(const std::string& key, const std::string& input) {
-    // 1. 密钥填充到32字节
+  
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 2. 准备AES-GCM所需参数
+    
     uint8_t iv[12];
     sgx_aes_gcm_128bit_tag_t mac;
     std::vector<uint8_t> ciphertext(input.length());
     
-    // 3. 生成随机IV
+  
     sgx_read_rand(iv, 12);
     
-    // 4. 执行加密
+
     sgx_status_t ret = sgx_rijndael128GCM_encrypt(
         (const sgx_aes_gcm_128bit_key_t*)padded_key.data(),
         (const uint8_t*)input.data(),
@@ -148,7 +147,7 @@ std::string CryptoUtils::F2(const std::string& key, const std::string& input) {
         ciphertext.data(),
         iv,
         12,
-        nullptr,  // 不使用AAD
+        nullptr,  
         0,
         &mac
     );
@@ -157,7 +156,7 @@ std::string CryptoUtils::F2(const std::string& key, const std::string& input) {
         return "";
     }
     
-    // 5. 组合IV + 密文 + MAC
+  
     std::string result;
     result.reserve(12 + input.length() + sizeof(mac));
     result.append((char*)iv, 12);
@@ -169,26 +168,26 @@ std::string CryptoUtils::F2(const std::string& key, const std::string& input) {
 
 // F2解密函数
 std::string CryptoUtils::F2_inverse(const std::string& key, const std::string& encrypted_input) {
-    // 1. 检查输入长度
+   
     if (encrypted_input.length() < 12 + sizeof(sgx_aes_gcm_128bit_tag_t)) {
-        return "";  // 输入太短，无效
+        return "";  
     }
     
-    // 2. 密钥填充到32字节
+   
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 3. 提取IV、密文和MAC
+    
     const uint8_t* iv = (const uint8_t*)encrypted_input.data();
     const size_t ciphertext_len = encrypted_input.length() - 12 - sizeof(sgx_aes_gcm_128bit_tag_t);
     const uint8_t* ciphertext = iv + 12;
     const sgx_aes_gcm_128bit_tag_t* mac = 
         (const sgx_aes_gcm_128bit_tag_t*)(encrypted_input.data() + encrypted_input.length() - sizeof(sgx_aes_gcm_128bit_tag_t));
     
-    // 4. 准备明文缓冲区
+ 
     std::vector<uint8_t> plaintext(ciphertext_len);
     
-    // 5. 执行解密
+
     sgx_status_t ret = sgx_rijndael128GCM_decrypt(
         (const sgx_aes_gcm_128bit_key_t*)padded_key.data(),
         ciphertext,
@@ -196,7 +195,7 @@ std::string CryptoUtils::F2_inverse(const std::string& key, const std::string& e
         plaintext.data(),
         iv,
         12,
-        nullptr,  // 不使用AAD
+        nullptr,  
         0,
         mac
     );
@@ -205,7 +204,7 @@ std::string CryptoUtils::F2_inverse(const std::string& key, const std::string& e
         return "";
     }
     
-    // 6. 返回解密结果
+
     return std::string((char*)plaintext.data(), ciphertext_len);
 }
 
@@ -214,14 +213,13 @@ std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
     size_t pubkey_len = 0;
     size_t privkey_len = 0;
     
-    // 先获取所需的缓冲区大小
     sgx_status_t status;
     sgx_status_t ret = ocall_generate_key_pair(&status, nullptr, &pubkey_len, nullptr, &privkey_len);
     if (ret != SGX_SUCCESS || status != SGX_SUCCESS) {
         return {"", ""};
     }
     
-    // 分配内存
+
     char* pubkey = (char*)malloc(pubkey_len);
     char* privkey = (char*)malloc(privkey_len);
     if (!pubkey || !privkey) {
@@ -230,7 +228,7 @@ std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
         return {"", ""};
     }
     
-    // 调用OCALL
+   
     ret = ocall_generate_key_pair(&status, pubkey, &pubkey_len, privkey, &privkey_len);
     
     if (ret != SGX_SUCCESS || status != SGX_SUCCESS) {
@@ -239,11 +237,11 @@ std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
         return {"", ""};
     }
     
-    // 提取结果
+  
     std::string pubkey_str(pubkey, pubkey_len);
     std::string privkey_str(privkey, privkey_len);
     
-    // 释放内存
+
     free(pubkey);
     free(privkey);
     
@@ -254,7 +252,7 @@ std::pair<std::string, std::string> CryptoUtils::generateKeyPair() {
 std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::string& private_key) {
     size_t out_len = 0;
     
-    // 先获取所需的缓冲区大小
+
     sgx_status_t status;
     sgx_status_t ret = ocall_sign_data(&status, data.c_str(), data.length(), 
                                       private_key.c_str(), private_key.length(),
@@ -263,11 +261,11 @@ std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::
         return "";
     }
     
-    // 分配内存
+ 
     char* result = (char*)malloc(out_len);
     if (!result) return "";
     
-    // 调用OCALL
+
     ret = ocall_sign_data(&status, data.c_str(), data.length(), 
                            private_key.c_str(), private_key.length(),
                            result, &out_len);
@@ -277,10 +275,10 @@ std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::
         return "";
     }
     
-    // 提取结果
+    
     std::string signature(result, out_len);
     
-    // 释放内存
+    
     free(result);
     
     return signature;
@@ -393,18 +391,18 @@ std::string CryptoUtils::base64Decode(const std::string& encoded_string) {
 std::string CryptoUtils::generateRandom(size_t len) {
     size_t out_len = 0;
     
-    // 先获取所需的缓冲区大小
+  
     sgx_status_t status;
     sgx_status_t ret = ocall_generate_random(&status, len, nullptr, &out_len);
     if (ret != SGX_SUCCESS || status != SGX_SUCCESS) {
         return "";
     }
     
-    // 分配内存
+  
     char* result = (char*)malloc(out_len);
     if (!result) return "";
     
-    // 调用OCALL
+  
     ret = ocall_generate_random(&status, len, result, &out_len);
     
     if (ret != SGX_SUCCESS || status != SGX_SUCCESS) {
@@ -412,10 +410,10 @@ std::string CryptoUtils::generateRandom(size_t len) {
         return "";
     }
     
-    // 提取结果
+   
     std::string random_str(result, out_len);
     
-    // 释放内存
+    
     free(result);
     
     return random_str;
@@ -425,7 +423,7 @@ std::string CryptoUtils::generateRandom(size_t len) {
 std::string CryptoUtils::aesEncrypt(const std::string& data, const std::string& key, const std::string& iv) {
     size_t out_len = 0;
     
-    // 先获取所需的缓冲区大小
+    
     sgx_status_t status;
     sgx_status_t ret = ocall_aes_encrypt(&status, data.c_str(), data.length(),
                                          key.c_str(), key.length(),
@@ -435,11 +433,10 @@ std::string CryptoUtils::aesEncrypt(const std::string& data, const std::string& 
         return "";
     }
     
-    // 分配内存
     char* result = (char*)malloc(out_len);
     if (!result) return "";
     
-    // 调用OCALL
+  
     ret = ocall_aes_encrypt(&status, data.c_str(), data.length(),
                              key.c_str(), key.length(),
                              iv.c_str(), iv.length(),
@@ -450,10 +447,10 @@ std::string CryptoUtils::aesEncrypt(const std::string& data, const std::string& 
         return "";
     }
     
-    // 提取结果
+  
     std::string encrypted(result, out_len);
     
-    // 释放内存
+
     free(result);
     
     return encrypted;
@@ -463,7 +460,7 @@ std::string CryptoUtils::aesEncrypt(const std::string& data, const std::string& 
 std::string CryptoUtils::aesDecrypt(const std::string& data, const std::string& key, const std::string& iv) {
     size_t out_len = 0;
     
-    // 先获取所需的缓冲区大小
+    
     sgx_status_t status;
     sgx_status_t ret = ocall_aes_decrypt(&status, data.c_str(), data.length(),
                                          key.c_str(), key.length(),
@@ -473,11 +470,11 @@ std::string CryptoUtils::aesDecrypt(const std::string& data, const std::string& 
         return "";
     }
     
-    // 分配内存
+
     char* result = (char*)malloc(out_len);
     if (!result) return "";
     
-    // 调用OCALL
+    
     ret = ocall_aes_decrypt(&status, data.c_str(), data.length(),
                              key.c_str(), key.length(),
                              iv.c_str(), iv.length(),
@@ -488,17 +485,17 @@ std::string CryptoUtils::aesDecrypt(const std::string& data, const std::string& 
         return "";
     }
     
-    // 提取结果
+
     std::string decrypted(result, out_len);
     
-    // 释放内存
+    
     free(result);
     
     return decrypted;
 }
 
 namespace CryptoUtils {
-    // 添加生成随机字符串的函数实现
+    
     std::string generateRandomString(size_t length) {
         const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         const size_t charset_size = sizeof(charset) - 1;
@@ -506,15 +503,15 @@ namespace CryptoUtils {
         std::string result;
         result.resize(length);
         
-        // 使用SGX随机数生成器
+       
         sgx_status_t ret = sgx_read_rand((unsigned char*)result.data(), length);
         
         if (ret != SGX_SUCCESS) {
-            // 处理错误
+         
             return "";
         }
         
-        // 将随机字节映射到可打印字符
+  
         for (size_t i = 0; i < length; i++) {
             result[i] = charset[static_cast<unsigned char>(result[i]) % charset_size];
         }
@@ -523,16 +520,16 @@ namespace CryptoUtils {
     }
 
     std::pair<size_t, std::string> xorPair(const std::pair<size_t, std::string>& p, const std::string& s) {
-        // 将二进制串转换为size_t，确保安全
+    
         size_t s_num = stringToSize(s);
         
-        // 保证s_num不为零
+        
         if (s_num == 0) s_num = 1;
         
-        // 进行异或操作
+       
         size_t new_first = p.first ^ s_num;
         
-        // 对字符串部分进行异或
+   
         std::string new_second = xorStrings(p.second, s);
         
         return {new_first, new_second};

@@ -3,10 +3,30 @@
 ## 项目简介
 本项目实现了一个基于 Intel SGX 的加密搜索系统，包含两个主要方案：BM 和 BM++。该系统在可信执行环境（TEE）中执行加密搜索操作，确保数据隐私和安全。
 
+## 环境配置
+
+### 1. 安装 Python 依赖
+```bash
+# 安装数据处理所需的 Python 包
+pip install pandas numpy nltk tqdm matplotlib
+```
+
+### 2. 配置 Docker 环境
+```bash
+# 安装 Docker
+sudo apt-get install -y docker.io
+
+# 启动 Docker 服务
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# 将当前用户添加到 docker 组
+sudo usermod -aG docker $USER
+```
+
 ## 系统要求
-- Intel SGX 支持（或使用模拟器模式）
-- Ubuntu 18.04 或更高版本
-- Docker（推荐使用）
+- Docker
+- Python 3.6+
 
 ## 数据集准备
 

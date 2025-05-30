@@ -13,29 +13,39 @@
 #include <unistd.h>
 #include <cstring>
 
-// 首先包含SGX相关头文件
-#include "sgx_urts.h"
-#include "Enclave_u.h"  // 由 EDL 生成的接口
 
-// 然后包含其他头文件
+#include "sgx_urts.h"
+#include "Enclave_u.h"  
+
+// 只在非服务器模式下包含测试相关头文件
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
 #include "test/test_bm.h"
 #include "test/test_bm_plus.h"
+#endif
+
 #include "utils/crypto.h"
 #include "utils/types.h"
 #include "utils/dataset_loader.h"
 #include "core/edb_controller.h"
 #include "utils/constants.h"
 #include "enclave/sgx_serializer.h"
+#include "server/bm_server.h"
+#include "server/bm_server_plus.h"
 
-// 防止包含Enclave_t.h
+
 #define ENCLAVE_T_H__
 
-// 全局变量
-static sgx_enclave_id_t global_eid = 0;  // Enclave ID
-static EDBController edb_controller;   // EDBController 实例
 
-// 全局 DatasetLoader 实例
+static sgx_enclave_id_t global_eid = 0;  
+static EDBController edb_controller;  
+
+// 只在非服务器模式下初始化数据集加载器
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
 DatasetLoader dataset_loader(constants::BASE_DIR, constants::MIN_CLUSTER_SIZE_3);
+#else
+// 服务器模式下声明但不初始化，如果需要使用时再懒加载
+DatasetLoader* dataset_loader_ptr = nullptr;
+#endif
 
 // 辅助函数 - 初始化 Enclave
 bool  initialize_enclave() {
@@ -63,12 +73,12 @@ void ocall_edb_search(
     size_t max_result_size,
     size_t* actual_size
 ) {
-    // 反序列化 SearchToken
+    
     std::string json_str(token_data, token_size);
     SGXValue j = sgx_serializer::parse(json_str);
     
     SearchToken token;
-    // 使用你定义的 ADL 序列化器
+
     token.tau1 = CryptoUtils::base64Decode(j["tau1"].get_string());
     token.tau2 = CryptoUtils::base64Decode(j["tau2"].get_string());
     token.tau3 = CryptoUtils::base64Decode(j["tau3"].get_string());
@@ -78,10 +88,9 @@ void ocall_edb_search(
         token.tau4.push_back(CryptoUtils::base64Decode(tau.get_string()));
     }
    
-    // 直接使用传入的 max_doc 参数，不再从 token 中获取
-    // 调用 EDBController 搜索
+   
     auto results = edb_controller.search(token, max_doc);
-    // 序列化结果 - 这是一个 vector<pair<string, string>>
+
     SGXValue result_json;
     for (const auto& result : results) {
         std::string doc_id = result.first;
@@ -107,7 +116,7 @@ void ocall_edb_update_index(
     size_t docs_size
 
 ) {
-    // 反序列化节点数据
+   
     std::string nodes_json_str(reinterpret_cast<const char*>(nodes_data), nodes_size);
     SGXValue json_nodes = sgx_serializer::parse(nodes_json_str);
     
@@ -116,7 +125,7 @@ void ocall_edb_update_index(
         IndexNode node;
         node.a1 = CryptoUtils::base64Decode(node_value["a1"].get_string());
         
-        // 反序列化 a2 (pair)
+    
         node.a2.first = std::stoull(CryptoUtils::base64Decode(node_value["a2_first"].get_string()));
         node.a2.second = CryptoUtils::base64Decode(node_value["a2_second"].get_string());
         
@@ -127,12 +136,12 @@ void ocall_edb_update_index(
         nodes.push_back(node);
     }
     
-    // 反序列化查找表
+   
     std::string table_json_str(reinterpret_cast<const char*>(table_data), table_size);
     SGXValue table_json = sgx_serializer::parse(table_json_str);
     LookupTable table;
 
-    // 使用keys()方法获取所有键，然后安全地访问每个值
+    
     std::vector<std::string> keys = table_json.keys();
     for (const auto& key : keys) {
         auto actual_key = CryptoUtils::base64Decode(key);
@@ -140,7 +149,7 @@ void ocall_edb_update_index(
     }
     
     
-    // 反序列化加密文档
+
     std::string docs_json_str(reinterpret_cast<const char*>(docs_data), docs_size);
     SGXValue docs_json = sgx_serializer::parse(docs_json_str);
     
@@ -149,7 +158,6 @@ void ocall_edb_update_index(
         docs.push_back(doc_json.get_string());
     }
     
-    // 调用 EDBController 更新索引
     edb_controller.updateIndex(keyword, nodes, table, docs);
 }
 
@@ -160,12 +168,12 @@ void ocall_edb_get_keyword_data(
     size_t* actual_size
 ) {
     
-    // 调用 EDBController 获取关键词数据
+    
     EncryptedList data = edb_controller.getKeywordData(keyword);
    
-    // 序列化数据
+
     SGXValue j;
-    // 序列化 IndexNode 列表
+
     SGXValue encryptedIndex;
     for (const auto& node : data.encryptedIndex) {
         SGXValue node_json;
@@ -180,14 +188,14 @@ void ocall_edb_get_keyword_data(
     }
     j["encryptedIndex"] = encryptedIndex;
     
-    // 序列化 LookupTable
+  
     SGXValue lookupTable;
     for (const auto& [key, value] : data.lookupTable) {
         lookupTable[key] = std::to_string(value);
     }
     j["lookupTable"] = lookupTable;
     
-    // 序列化 DocumentId 列表
+
     SGXValue docs_array;
     for (const auto& doc : data.documents) {
         docs_array.push_back(doc);
@@ -207,10 +215,16 @@ void ocall_dataset_get_bogus_document(
     size_t max_doc_size,
     size_t* actual_size
 ) {
-    // 调用 DatasetLoader 获取虚假文档
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
     Document doc = dataset_loader.getBogusDocument(keyword, max_state, max_level);
+#else
+    // 在服务器模式下，如果需要，懒加载数据集
+    if (!dataset_loader_ptr) {
+        dataset_loader_ptr = new DatasetLoader(constants::BASE_DIR, constants::MIN_CLUSTER_SIZE_3);
+    }
+    Document doc = dataset_loader_ptr->getBogusDocument(keyword, max_state, max_level);
+#endif
     
-    // 序列化文档
     SGXValue j;
     j["id"] = doc.id;
     j["level"] = doc.level;
@@ -227,15 +241,21 @@ void ocall_dataset_get_all_clusters(
     size_t max_data_size,
     size_t* actual_size
 ) {
-    // 调用 DatasetLoader 获取所有簇
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
     auto clusters = dataset_loader.getAllClusters();
-    
-    // 序列化簇数据
+#else
+    // 在服务器模式下，如果需要，懒加载数据集
+    if (!dataset_loader_ptr) {
+        dataset_loader_ptr = new DatasetLoader(constants::BASE_DIR, constants::MIN_CLUSTER_SIZE_3);
+    }
+    auto clusters = dataset_loader_ptr->getAllClusters();
+#endif
+   
     SGXValue j;
     for (const auto& cluster : clusters) {
         SGXValue cluster_json;
         
-        // 序列化关键词列表
+       
         SGXValue keywords_json;
         for (const auto& keyword : cluster.keywords) {
             keywords_json.push_back(keyword);
@@ -255,6 +275,8 @@ void ocall_dataset_get_all_clusters(
     memcpy(data_buffer, json_str.c_str(), *actual_size);
 }
 
+// 测试函数（只在非服务器模式下包含）
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
 void run_bm_test(sgx_enclave_id_t eid, const std::string& test_name) {
     TestBM test(eid);
     test.run(test_name);
@@ -264,6 +286,7 @@ void run_bm_plus_test(sgx_enclave_id_t eid, const std::string& test_name) {
     TestBMPlus test(eid);
     test.run(test_name);
 }
+#endif
 
 // 生成密钥对
 sgx_status_t ocall_generate_key_pair(
@@ -274,7 +297,7 @@ sgx_status_t ocall_generate_key_pair(
 ) {
     auto [pub, priv] = CryptoUtils::generateKeyPair();
     
-    // 检查缓冲区大小
+  
     if (pubkey && *pubkey_len >= pub.length()) {
         memcpy(pubkey, pub.c_str(), pub.length());
         *pubkey_len = pub.length();
@@ -305,7 +328,7 @@ sgx_status_t ocall_sign_data(
     
     std::string sig = CryptoUtils::signWithPrivateKey(data_str, key_str);
     
-    // 检查缓冲区大小
+
     if (result && *out_len >= sig.length()) {
         memcpy(result, sig.c_str(), sig.length());
         *out_len = sig.length();
@@ -345,7 +368,7 @@ sgx_status_t ocall_base64_encode(
     std::string data_str(input, input_len);
     std::string encoded_str = CryptoUtils::base64Encode(data_str);
     
-    // 检查缓冲区大小
+  
     if (result && *out_len >= encoded_str.length()) {
         memcpy(result, encoded_str.c_str(), encoded_str.length());
         *out_len = encoded_str.length();
@@ -365,7 +388,7 @@ sgx_status_t ocall_base64_decode(
     std::string data_str(input, input_len);
     std::string decoded_str = CryptoUtils::base64Decode(data_str);
     
-    // 检查缓冲区大小
+   
     if (result && *out_len >= decoded_str.length()) {
         memcpy(result, decoded_str.c_str(), decoded_str.length());
         *out_len = decoded_str.length();
@@ -387,13 +410,13 @@ sgx_status_t ocall_f2_encrypt(
     std::string data_str(input, input_len);
     std::string key_str(key, key_len);
     
-    // 将输入字符串转换为整数级别
+    
     int level = std::stoi(data_str);
     
-    // 调用正确的F2函数
+
     std::string encrypted_str = CryptoUtils::F2(key_str, level);
     
-    // 检查缓冲区大小
+
     if (result && *out_len >= encrypted_str.length()) {
         memcpy(result, encrypted_str.c_str(), encrypted_str.length());
         *out_len = encrypted_str.length();
@@ -417,7 +440,7 @@ sgx_status_t ocall_f2_decrypt(
     
     std::string decrypted_str = CryptoUtils::F2_inverse(key_str, data_str);
     
-    // 检查缓冲区大小
+ 
     if (result && *out_len >= decrypted_str.length()) {
         memcpy(result, decrypted_str.c_str(), decrypted_str.length());
         *out_len = decrypted_str.length();
@@ -434,8 +457,7 @@ sgx_status_t ocall_generate_random(
     size_t* out_len
 ) {
     std::string random = CryptoUtils::generateRandomString(len);
-    
-    // 检查缓冲区大小
+
     if (result && *out_len >= random.length()) {
         memcpy(result, random.c_str(), random.length());
         *out_len = random.length();
@@ -462,7 +484,7 @@ sgx_status_t ocall_aes_encrypt(
     
     std::string encrypted_str = CryptoUtils::computeAES(data_str, key_str, iv_str);
     
-    // 检查缓冲区大小
+    
     if (result && *out_len >= encrypted_str.length()) {
         memcpy(result, encrypted_str.c_str(), encrypted_str.length());
         *out_len = encrypted_str.length();
@@ -489,7 +511,7 @@ sgx_status_t ocall_aes_decrypt(
     
     std::string decrypted_str = CryptoUtils::computeAES_decrypt(data_str, key_str, iv_str);
     
-    // 检查缓冲区大小
+    
     if (result && *out_len >= decrypted_str.length()) {
         memcpy(result, decrypted_str.c_str(), decrypted_str.length());
         *out_len = decrypted_str.length();
@@ -524,25 +546,148 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // 根据命令行参数选择要运行的测试
-    if (argc > 1) {
-        std::string test_type = argv[1];
-        std::string test_name = (argc > 2) ? argv[2] : "";
-
-        if (test_type == "--test-bm") {
-            std::cout << "Running BM test..." << std::endl;
-            run_bm_test(global_eid, test_name);
-        } else if (test_type == "--test-bm-plus") {
-            std::cout << "Running BM++ test..." << std::endl;
-            run_bm_plus_test(global_eid, test_name);
-        } else {
-            std::cout << "Unknown command: " << test_type << std::endl;
-            std::cout << "Available commands: --test-bm [test_name], --test-bm-plus [test_name]" << std::endl;
+#ifdef RUN_BM_SERVER
+    // 默认端口
+    int port = 8080;
+    
+    // 检查是否有端口参数
+    if (argc > 1 && std::string(argv[1]) == "--port" && argc > 2) {
+        try {
+            port = std::stoi(argv[2]);
+            if (port <= 0 || port > 65535) {
+                std::cerr << "Error: Port must be between 1 and 65535" << std::endl;
+                return 1;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Invalid port number" << std::endl;
+            return 1;
         }
-    } else {
-        std::cout << "No command specified. Available commands: --test-bm [test_name], --test-bm-plus [test_name]" << std::endl;
     }
     
+    // 创建并启动BM服务器
+    std::cout << "\n*** Starting BM Search Server ***" << std::endl;
+    BMServer server(port, global_eid);
+    std::cout << "Server initialized, starting on port " << port << std::endl;
+    server.start();
+#elif defined(RUN_BM_PLUS_SERVER)
+    // 默认端口
+    int port = 8081;
+    
+    // 检查是否有端口参数
+    if (argc > 1 && std::string(argv[1]) == "--port" && argc > 2) {
+        try {
+            port = std::stoi(argv[2]);
+            if (port <= 0 || port > 65535) {
+                std::cerr << "Error: Port must be between 1 and 65535" << std::endl;
+                return 1;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Invalid port number" << std::endl;
+            return 1;
+        }
+    }
+    
+    // 创建并启动BM Plus服务器
+    std::cout << "\n*** Starting BM++ Search Server ***" << std::endl;
+    BMServerPlus server(port, global_eid);
+    std::cout << "Server initialized, starting on port " << port << std::endl;
+    server.start();
+#else
+    if (argc > 1) {
+        std::string cmd = argv[1];
+
+        if (cmd == "--test-bm") {
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
+            std::string test_name = (argc > 2) ? argv[2] : "";
+            std::cout << "Running BM test..." << std::endl;
+            run_bm_test(global_eid, test_name);
+#else
+            std::cout << "Test functions not available in server build" << std::endl;
+#endif
+        } 
+        else if (cmd == "--test-bm-plus") {
+#if !defined(RUN_BM_SERVER) && !defined(RUN_BM_PLUS_SERVER)
+            std::string test_name = (argc > 2) ? argv[2] : "";
+            std::cout << "Running BM++ test..." << std::endl;
+            run_bm_plus_test(global_eid, test_name);
+#else
+            std::cout << "Test functions not available in server build" << std::endl;
+#endif
+        }
+        else if (cmd == "--start-bm-server") {
+            // 默认端口
+            int port = 8080;
+            
+            // 检查是否有端口参数
+            if (argc > 2 && std::string(argv[2]) == "--port" && argc > 3) {
+                try {
+                    port = std::stoi(argv[3]);
+                    if (port <= 0 || port > 65535) {
+                        std::cerr << "Error: Port must be between 1 and 65535" << std::endl;
+                        return 1;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Invalid port number" << std::endl;
+                    return 1;
+                }
+            }
+            
+            // 创建并启动BM服务器
+            std::cout << "\n*** Starting BM Search Server ***" << std::endl;
+            BMServer server(port, global_eid);
+            std::cout << "Server initialized, starting on port " << port << std::endl;
+            server.start();
+        }
+        else if (cmd == "--start-bm-plus-server") {
+            // 默认端口
+            int port = 8081;
+            
+            // 检查是否有端口参数
+            if (argc > 2 && std::string(argv[2]) == "--port" && argc > 3) {
+                try {
+                    port = std::stoi(argv[3]);
+                    if (port <= 0 || port > 65535) {
+                        std::cerr << "Error: Port must be between 1 and 65535" << std::endl;
+                        return 1;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Invalid port number" << std::endl;
+                    return 1;
+                }
+            }
+            
+            // 创建并启动BM Plus服务器
+            std::cout << "\n*** Starting BM++ Search Server ***" << std::endl;
+            BMServerPlus server(port, global_eid);
+            std::cout << "Server initialized, starting on port " << port << std::endl;
+            server.start();
+        }
+        else {
+            std::cout << "Unknown command: " << cmd << std::endl;
+            std::cout << "Available commands:" << std::endl;
+            std::cout << "  --test-bm [test_name]         Run BM tests" << std::endl;
+            std::cout << "  --test-bm-plus [test_name]    Run BM++ tests" << std::endl;
+            std::cout << "  --start-bm-server [--port N]  Start BM server" << std::endl;
+            std::cout << "  --start-bm-plus-server [--port N]  Start BM++ server" << std::endl;
+        }
+    } else {
+        std::cout << "No command specified. Available commands:" << std::endl;
+        std::cout << "  --test-bm [test_name]         Run BM tests" << std::endl;
+        std::cout << "  --test-bm-plus [test_name]    Run BM++ tests" << std::endl;
+        std::cout << "  --start-bm-server [--port N]  Start BM server" << std::endl;
+        std::cout << "  --start-bm-plus-server [--port N]  Start BM++ server" << std::endl;
+    }
+#endif
+    
     sgx_destroy_enclave(global_eid);
+    
+#if defined(RUN_BM_SERVER) || defined(RUN_BM_PLUS_SERVER)
+    // 清理资源
+    if (dataset_loader_ptr) {
+        delete dataset_loader_ptr;
+        dataset_loader_ptr = nullptr;
+    }
+#endif
+    
     return 0;
 }

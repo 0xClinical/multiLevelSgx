@@ -22,9 +22,9 @@ static std::unique_ptr<BMSchemePlus> g_bm_plus_scheme;
 
 // 辅助函数 - 打印日志
 void print_log(const std::string& message) {
-    // 使用正确的OCALL函数
+   
     sgx_status_t ret = ocall_print_string(message.c_str());
-    // 可以检查返回值
+    
 }
 
 /*--------------------------------BM--------------------------------*/

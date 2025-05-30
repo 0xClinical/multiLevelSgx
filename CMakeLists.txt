@@ -92,8 +92,30 @@ set(APP_SRC
     src/core/edb_controller.cpp
     src/utils/crypto.cpp
     src/enclave/sgx_serializer.cpp
+    src/server/bm_server.cpp
+    src/server/bm_server_plus.cpp
     src/test/test_bm.cpp
     src/test/test_bm_plus.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/Enclave_u.c
+)
+
+# 添加BM服务器的源文件
+set(BM_SERVER_SRC
+    src/App.cpp
+    src/server/bm_server.cpp
+    src/utils/crypto.cpp
+    src/core/edb_controller.cpp
+    src/enclave/sgx_serializer.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/Enclave_u.c
+)
+
+# 添加BM++服务器的源文件
+set(BM_SERVER_PLUS_SRC
+    src/App.cpp
+    src/server/bm_server_plus.cpp
+    src/utils/crypto.cpp
+    src/core/edb_controller.cpp
+    src/enclave/sgx_serializer.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/Enclave_u.c
 )
 
@@ -118,14 +140,76 @@ target_include_directories(sgx_app PRIVATE
     ${OPENSSL_INCLUDE_DIR}
 )
 
+# 添加BM服务器可执行文件
+add_executable(bm_server ${BM_SERVER_SRC})
+target_include_directories(bm_server PRIVATE
+    ${SGX_INCLUDE_PATH}
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${OPENSSL_INCLUDE_DIR}
+)
+
+# 添加BM++服务器可执行文件
+add_executable(bm_server_plus ${BM_SERVER_PLUS_SRC})
+target_include_directories(bm_server_plus PRIVATE
+    ${SGX_INCLUDE_PATH}
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${OPENSSL_INCLUDE_DIR}
+)
+
 # 为不可信应用程序添加编译选项
 target_compile_options(sgx_app PRIVATE
     -fPIC
     -Wno-attributes
 )
 
+# 为BM服务器添加编译选项
+target_compile_options(bm_server PRIVATE
+    -fPIC
+    -Wno-attributes
+    -Wno-unused-result
+)
+
+# 为BM服务器添加编译定义
+target_compile_definitions(bm_server PRIVATE
+    RUN_BM_SERVER
+)
+
+# 为BM++服务器添加编译选项
+target_compile_options(bm_server_plus PRIVATE
+    -fPIC
+    -Wno-attributes
+    -Wno-unused-result
+)
+
+# 为BM++服务器添加编译定义
+target_compile_definitions(bm_server_plus PRIVATE
+    RUN_BM_PLUS_SERVER
+)
+
 # 链接不可信应用程序
 target_link_libraries(sgx_app
+    /opt/intel/sgxsdk/sdk_libs/libsgx_urts_sim.so
+    /opt/intel/sgxsdk/sdk_libs/libsgx_uae_service_sim.so
+    ${OPENSSL_CRYPTO_LIBRARY}
+    ${OPENSSL_SSL_LIBRARY}
+    ${CMAKE_THREAD_LIBS_INIT}
+    -ldl
+)
+
+# 链接BM服务器
+target_link_libraries(bm_server
+    /opt/intel/sgxsdk/sdk_libs/libsgx_urts_sim.so
+    /opt/intel/sgxsdk/sdk_libs/libsgx_uae_service_sim.so
+    ${OPENSSL_CRYPTO_LIBRARY}
+    ${OPENSSL_SSL_LIBRARY}
+    ${CMAKE_THREAD_LIBS_INIT}
+    -ldl
+)
+
+# 链接BM++服务器
+target_link_libraries(bm_server_plus
     /opt/intel/sgxsdk/sdk_libs/libsgx_urts_sim.so
     /opt/intel/sgxsdk/sdk_libs/libsgx_uae_service_sim.so
     ${OPENSSL_CRYPTO_LIBRARY}
@@ -195,7 +279,7 @@ add_custom_command(
 add_custom_target(enclave_signed ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/enclave.signed.so)
 
 # 添加安装规则
-install(TARGETS sgx_app DESTINATION bin)
+install(TARGETS sgx_app bm_server bm_server_plus DESTINATION bin)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/enclave.signed.so DESTINATION lib)
 
 # 添加SGX SDK库路径
@@ -214,3 +298,8 @@ link_directories(/usr/lib/x86_64-linux-gnu)
 # 查找SGX库
 find_library(SGX_URTS_LIB sgx_urts_sim PATHS ${SGX_SDK_PATH}/sdk_libs ${SGX_SDK_PATH}/lib64 ${SGX_SDK_PATH}/lib /usr/lib/x86_64-linux-gnu)
 find_library(SGX_UAE_SERVICE_LIB sgx_uae_service_sim PATHS ${SGX_SDK_PATH}/sdk_libs ${SGX_SDK_PATH}/lib64 ${SGX_SDK_PATH}/lib /usr/lib/x86_64-linux-gnu)
+
+# 检查httplib.h文件是否存在
+if(NOT EXISTS ${PROJECT_SOURCE_DIR}/include/httplib.h)
+    message(FATAL_ERROR "httplib.h file not found in ${PROJECT_SOURCE_DIR}/include/. Please run cmake again to download it.")
+endif()

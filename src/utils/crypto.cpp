@@ -61,17 +61,17 @@ std::string CryptoUtils::F2(const std::string& key, int level) {
     unsigned char output[16];
     AES_KEY aes_key;
     
-    // 填充密钥到32字节
+  
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 准备输入（level转为固定长度的字符串）
+  
     std::string level_str = std::to_string(level);
     std::string padded_input = "F2";
-    padded_input += std::string(1, static_cast<char>(level));  // 直接存储level的值
+    padded_input += std::string(1, static_cast<char>(level));  
     padded_input.resize(16, 0);
     
-    // 加密
+ 
     AES_set_encrypt_key(reinterpret_cast<const unsigned char*>(padded_key.c_str()), 256, &aes_key);
     AES_encrypt(reinterpret_cast<const unsigned char*>(padded_input.c_str()), output, &aes_key);
     
@@ -82,21 +82,21 @@ std::string CryptoUtils::F2_inverse(const std::string& key, const std::string& e
     unsigned char output[16];
     AES_KEY aes_key;
     
-    // 填充密钥到32字节
+    
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 解密
+    
     AES_set_decrypt_key(reinterpret_cast<const unsigned char*>(padded_key.c_str()), 256, &aes_key);
     AES_decrypt(reinterpret_cast<const unsigned char*>(encrypted_level.c_str()), output, &aes_key);
     
-    // 检查前缀并获取level值
+
     std::string decrypted(reinterpret_cast<char*>(output), 16);
     if (decrypted.substr(0, 2) != "F2") {
         throw std::runtime_error("Invalid F2 prefix");
     }
     
-    // 直接返回第3个字节的值作为字符串
+  
     return std::to_string(static_cast<int>(decrypted[2]));
 }
 
@@ -114,7 +114,7 @@ std::string CryptoUtils::generateRandomKey(size_t length) {
         throw std::runtime_error("Failed to generate random key");
     }
     
-    // 转换为十六进制字符串
+  
     std::string hexKey;
     for (size_t i = 0; i < length; i++) {
         char hex[3];
@@ -134,13 +134,12 @@ std::string CryptoUtils::bytesToHex(const unsigned char* bytes, size_t len) {
 }
 
 std::string CryptoUtils::xorStrings(const std::string& a, const std::string& b) {
-    // 总是使用较长的字符串作为基础
+  
     const std::string& longer = (a.length() >= b.length()) ? a : b;
     const std::string& shorter = (a.length() >= b.length()) ? b : a;
     
     std::string result = longer;
-    
-    // 循环使用较短的字符串进行异或
+
     for (size_t i = 0; i < longer.length(); i++) {
         result[i] ^= shorter[i % shorter.length()];
     }
@@ -148,10 +147,10 @@ std::string CryptoUtils::xorStrings(const std::string& a, const std::string& b) 
     return result;
 }
 size_t CryptoUtils::stringToSize(const std::string& input) {
-    // 计算完整的哈希
+  
     std::string hash = computeDigest(input);
     
-    // 确保使用一致的字节序转换
+   
     size_t result = 0;
     for (size_t i = 0; i < sizeof(size_t); i++) {
         result = (result << 8) | (static_cast<unsigned char>(hash[i]));
@@ -257,7 +256,7 @@ std::string CryptoUtils::computeAES(const std::string& key,
 std::string CryptoUtils::computeAES_decrypt(const std::string& key, 
                                           const std::string& encrypted_input,
                                           const std::string& prefix) {
-    // 首先读取原始长度
+   
     if (encrypted_input.length() < sizeof(size_t)) {
         throw std::runtime_error("Invalid encrypted input");
     }
@@ -265,23 +264,23 @@ std::string CryptoUtils::computeAES_decrypt(const std::string& key,
     size_t original_length;
     memcpy(&original_length, encrypted_input.data(), sizeof(size_t));
     
-    // 获取加密数据部分
+   
     std::string encrypted_data = encrypted_input.substr(sizeof(size_t));
     if (encrypted_data.length() % 16 != 0) {
         throw std::runtime_error("Invalid input length for AES decryption");
     }
     
-    // 准备密钥
+ 
     std::string padded_key = key;
     padded_key.resize(32, 0);
     
-    // 准备输出缓冲区
+  
     std::vector<unsigned char> output(encrypted_data.length());
     AES_KEY aes_key;
     AES_set_decrypt_key((unsigned char*)padded_key.c_str(), 256, &aes_key);
     
-    // 使用CBC模式解密
-    unsigned char iv[16] = {0};  // 初始化向量
+   
+    unsigned char iv[16] = {0}; 
     AES_cbc_encrypt(
         (unsigned char*)encrypted_data.c_str(),
         output.data(),
@@ -291,18 +290,18 @@ std::string CryptoUtils::computeAES_decrypt(const std::string& key,
         AES_DECRYPT
     );
     
-    // 验证前缀并还原原始数据
+    
     std::string decrypted((char*)output.data(), output.size());
     if (decrypted.substr(0, prefix.length()) != prefix) {
         throw std::runtime_error("Invalid prefix in decrypted data");
     }
     
-    // 使用存储的原始长度来还原数据
+   
     return decrypted.substr(prefix.length(), original_length);
 }
 // 使用私钥签名
 std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::string& private_key) {
-    // 从PEM创建私钥
+    
     EVP_PKEY* pkey = nullptr;
     BIO* bio = BIO_new_mem_buf(private_key.c_str(), -1);
     if (!bio) return "";
@@ -311,21 +310,21 @@ std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::
     BIO_free(bio);
     if (!pkey) return "";
     
-    // 创建签名上下文
+   
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // 初始化签名
+    
     if (EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, pkey) <= 0) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return "";
     }
     
-    // 更新要签名的数据
+  
     if (EVP_DigestSignUpdate(ctx, data.c_str(), data.length()) <= 0) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
@@ -372,10 +371,10 @@ std::string CryptoUtils::signWithPrivateKey(const std::string& data, const std::
 bool CryptoUtils::verifySignature(const std::string& data, 
                                  const std::string& signature,
                                  const std::string& public_key) {
-    // Base64解码签名
+   
     std::string decoded_sig = base64Decode(signature);
     
-    // 从PEM创建公钥
+
     EVP_PKEY* pkey = nullptr;
     BIO* bio = BIO_new_mem_buf(public_key.c_str(), -1);
     if (!bio) return false;
@@ -384,28 +383,27 @@ bool CryptoUtils::verifySignature(const std::string& data,
     BIO_free(bio);
     if (!pkey) return false;
     
-    // 创建验证上下文
+  
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         EVP_PKEY_free(pkey);
         return false;
     }
     
-    // 初始化验证
+
     if (EVP_DigestVerifyInit(ctx, nullptr, EVP_sha256(), nullptr, pkey) <= 0) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return false;
     }
-    
-    // 更新要验证的数据
+  
     if (EVP_DigestVerifyUpdate(ctx, data.c_str(), data.length()) <= 0) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return false;
     }
     
-    // 验证签名
+   
     int ret = EVP_DigestVerifyFinal(ctx, 
         reinterpret_cast<const unsigned char*>(decoded_sig.c_str()),
         decoded_sig.length());

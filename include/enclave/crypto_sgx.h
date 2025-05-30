@@ -6,7 +6,7 @@
 #include "sgx_tcrypto.h"
 
 namespace CryptoUtils {
-    // 只包含SGX封装区内可用的函数
+   
     std::string H1(const std::string& key, const std::string& input);
     std::string H2(const std::string& key, const std::string& r);
     std::string H3(const std::string& stateKey, const std::string& keyword);
@@ -20,8 +20,7 @@ namespace CryptoUtils {
     std::string xorStrings(const std::string& a, const std::string& b);
     std::string computeDigest(const std::string& input);
     size_t stringToSize(const std::string& input);
-    
-    // 高级加密功能（通过OCALL实现）
+ 
     std::pair<std::string, std::string> generateKeyPair();
     std::string signWithPrivateKey(const std::string& data, const std::string& private_key);
     bool verifySignature(const std::string& data, const std::string& signature, const std::string& public_key);
@@ -31,9 +30,8 @@ namespace CryptoUtils {
     std::string aesEncrypt(const std::string& data, const std::string& key, const std::string& iv);
     std::string aesDecrypt(const std::string& data, const std::string& key, const std::string& iv);
     
-    // 添加生成随机字符串的函数
+   
     std::string generateRandomString(size_t length = 32);
 
-    // 添加到CryptoUtils命名空间
     std::pair<size_t, std::string> xorPair(const std::pair<size_t, std::string>& p, const std::string& key);
 }
